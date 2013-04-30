@@ -110,6 +110,7 @@ class Csv2KmlTour
 	#
 	# ASSUMPTION: the csv has a set of timestamps one for each consecutive minute, only one per minute, not skipping minutes.
 	# FUTURE: (automatically or by flag) handle gaps in timestamps by adjusting AnimatedUpdate delayedStart times accordingly.
+	# TODO?:  Add parameters to specify a start and end range of the data set to actually analyze? (Bob's suggestion)
 	def process_command_line
 		were_inputs_ok = true
 		@nominal = ARGV.shift.to_f
@@ -265,8 +266,10 @@ class Csv2KmlTour
 
 	TimestampIndex = 0
 	def parse_csv_data
-		is_first_data_row = true
+		is_first_data_row  = true
+		count_of_data_rows = 0
 		while (@csv.gets) do
+			count_of_data_rows += 1
 		       	csv_line = $_.strip
 			#puts("DEBUG: parsing csv_line #{csv_line}")
 			@animatedUpdate_is_open = false # gets set to true if any of this row's data points cause an update
