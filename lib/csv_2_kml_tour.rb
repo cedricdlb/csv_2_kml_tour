@@ -1,8 +1,7 @@
-require 'date'
 
 class Csv2KmlTour
 #	attr_accessor :schedule_hash, :next_dates, :last_date
-	def init
+	def initialize
 		@bins = [
 			#"Level_neg_12", # Blue
 			#"Level_neg_11", # Blue_Azure
@@ -37,12 +36,7 @@ class Csv2KmlTour
 			"Level_pos_02", # Orange
 			"Level_pos_03", # Red
 		]
-		#@bin_count = @bins.size
 		@previous_bins = []
-		#@fraction_min = 0.9 # defaults may be overwritten in process_command_line
-		#@fraction_max = 1.1 # defaults may be overwritten in process_command_line
-		#@fraction_range = nil
-		#@fraction_per_bin = nil
 
 		# upper limits, <=:  -7%   -5%   -3%   +3%   +5%   +7%  > +7%   a fraction <= threshold[i] goes into bin[i] 
 		@bin_thresholds = [0.93, 0.95, 0.97, 1.03, 1.05, 1.07] # Last bin fraction is everything above
@@ -50,8 +44,8 @@ class Csv2KmlTour
 		@nominal = 0
 		@csv = nil
 		@kml = nil
+		@total_chars_read        = 0
 		@number_of_timestamps    = 0
-		@number_of_columns       = 0
 		@csv_column_names        = []
 		@fraction_totals         = []
 		@fraction_highs          = []
@@ -66,19 +60,14 @@ class Csv2KmlTour
 		@previous_timestamp      = nil
 		@current_timestamp       = nil
 		@elapsed_seconds         = 0
-		@report_progress_at      = 0.1  # next file fraction limit to report progress
-		@reporting_increments    = 0.1  # every this fraction of file, report progress
-		@csv_file_size           = 0    # file size in bytes
-		@csv_file_pos            = 0    # file position in bytes
-		@progress_percent        = 0    # of parsing csv file
 		@tour_current_time       = 0.00 # in seconds
 		@tour_step_duration      = 0.02 # in seconds
 	end
 
 	def run
-		init
+		initialize
 		if(process_command_line &&
-		   (additional_inits &&
+		   (setup_progress_status &&
 		    parse_csv_headers &&
 		    write_kml_open_tour_tags &&
 		    parse_csv_data &&
@@ -91,9 +80,9 @@ class Csv2KmlTour
 	end
 	
 	# Usage: 
-	#	csv_2_kml_tour.rb <nominal_value> <input_csv_file_name.csv>
+	#	ruby bin\csv_2_kml_tour.rb <nominal_value> <input_csv_file_name.csv>
 	#  example:
-	#	csv_2_kml_tour.rb 7621 12MW_Voltage_B_On_7E_From_1757_To_853.csv
+	#	ruby bin\csv_2_kml_tour.rb 7621 12MW_Voltage_B_On_7E_From_1757_To_853.csv
 	# OUTPUT: writes out file changes.<input_csv_file_name>.kml, e.g.:
 	#	           changes.12MW_Voltage_B_On_7E_From_1757_To_853.kml
 	#
@@ -121,8 +110,8 @@ class Csv2KmlTour
 			were_inputs_ok = false
 		end
 
-		#unless ("csv".equals(File.extname(csv_file_name)))
-		unless (".csv" == File.extname(csv_file_name))
+		#unless "csv".equals(File.extname(csv_file_name))
+		unless ".csv" == File.extname(csv_file_name)
 			puts "FAILURE: csv_file_name #{csv_file_name} extension (#{File.extname(csv_file_name)}) is not '.csv'."
 			were_inputs_ok = false
 		end
@@ -151,7 +140,7 @@ class Csv2KmlTour
 			# TODO: In the case of -a append to kml, I will need to position the
 			#       write/insert pointer into the correct location before proceeding.
 		end
-		return were_inputs_ok 
+		were_inputs_ok 
 	end
 
 	def close_files
@@ -160,44 +149,23 @@ class Csv2KmlTour
 		true
 	end
 
-	def additional_inits
-		# Determine bin size
-		#@fraction_range = @fraction_max - @fraction_min
-		#@fraction_per_bin = @fraction_range / (@bin_count - 1)
-		@csv_file_size = @csv.size # file size      in bytes
-		@csv_file_pos  = @csv.pos  # current offset in bytes, allowing me to report % progress
-		@progress_percent = @csv_file_pos / @csv_file_size 
+	def setup_progress_status
+		@progress_status = ProgressStatus.new(@csv.size, @csv.pos)
 	end
 
 	def parse_csv_headers
 		was_process_successful = true
 		# readlines from the csv file, skipping over all but the timestamp headers
 		# TODO? ALT: use io.lines instead of io.gets, to process lines with an iterator
-		# TODO: how to have a one-line while without empty do end
-		#while (csv_line = @csv.gets && !(csv_line =~ /^# timestamp,/)) do
-		#	puts("DEBUG: csv header line: #{$_}")
-		#end
 		while (@csv.gets) do
-		       	csv_line = $_.strip
-		#	puts("DEBUG: csv header line: #{csv_line}")
-			break if (csv_line =~ /^# timestamp,/)
+			@total_chars_read += $LAST_READ_LINE.size
+			break if $LAST_READ_LINE =~ /^# timestamp,/
 		end
-		unless csv_line
-			# File is empty or the timestamp header was never found, which is an error...
-			was_process_successful = false
-			puts("ERROR: In parsing the csv file, the timestamp header was never found")
-		else
+
+		csv_line = $LAST_READ_LINE
+		if csv_line
 			# must be on the timestamp line
-			@csv_column_names  = csv_line.split(",")
-			@number_of_columns = @csv_column_names.size
-			@previous_bins           = Array.new(@number_of_columns)
-			@fraction_totals         = Array.new(@number_of_columns)
-			@fraction_highs          = Array.new(@number_of_columns)
-			@fraction_lows           = Array.new(@number_of_columns)
-			@times_above_max_allowed = Array.new(@number_of_columns)
-			@times_below_min_allowed = Array.new(@number_of_columns)
-			@timestamps_starts_above = Array.new(@number_of_columns)
-			@timestamps_starts_below = Array.new(@number_of_columns)
+			@csv_column_names  = csv_line.strip.split(",")
 
 			# Need to convert from column names to the names/ids of kml elements.
 			# In the case of Saint John files, the power lines are names like STJ_1234
@@ -212,8 +180,109 @@ class Csv2KmlTour
 				glm_name.gsub!(/_Node/, '')
 				glm_name.gsub!(/[^_]*_(.*)/, '\1')
 			end
+		else
+			# File is empty or the timestamp header was never found, which is an error...
+			was_process_successful = false
+			puts("ERROR: In parsing the csv file, the timestamp header was never found")
 		end
-		return was_process_successful
+		was_process_successful
+	end
+
+	TIMESTAMP_INDEX = 0
+	def parse_csv_data
+		count_of_data_rows = 0
+		# TODO? ALT: use io.lines instead of io.gets, to process lines with an iterator
+		while (@csv.gets) do
+			csv_line = $LAST_READ_LINE
+			count_of_data_rows += 1
+#			puts("DEBUG: data_row #{count_of_data_rows} parsing csv line: #{csv_line}")
+			@animatedUpdate_is_open = false # gets set to true if any of this row's data points cause an update
+			csv_line.split(",").each_with_index do |column_value, index|
+#				puts("DEBUG: parsing csv column index #{index}: '#{column_value}'")
+				TIMESTAMP_INDEX == index ? process_timestamp(column_value) :
+							   process_data_point(column_value, index)
+			end
+			write_kml_close_timestep_AnimatedUpdate_tags if @animatedUpdate_is_open
+			@tour_current_time += @tour_step_duration
+			@total_chars_read += csv_line.size
+			@progress_status.report_progress(@total_chars_read)
+			#@progress_status.report_progress(@csv.pos)
+			# NOTE: Can't use @csv.pos as it affects the lines subsequently read.
+			#       The effect is that on the next io.gets, the date is left out.
+			#       On each subsequent io.gets, the data is left out except for one additional character:
+			#       DEBUG: data_row  1 parsing csv line: 2010-03-27 00:00:00 PDT,7721.584034...
+			#       DEBUG: data_row  2 parsing csv line:  00:01:00 PDT,7720.945366,7721.2328...
+			#       DEBUG: data_row  3 parsing csv line: 7 00:02:00 PDT,7720.207934,7720.493...
+			#       DEBUG: data_row  4 parsing csv line: 27 00:03:00 PDT,7719.788189,7720.07...
+			#       DEBUG: data_row  5 parsing csv line: -27 00:04:00 PDT,7719.316053,7719.5...
+			#       DEBUG: data_row  6 parsing csv line: 3-27 00:05:00 PDT,7719.868483,7720....
+			#       DEBUG: data_row  7 parsing csv line: 03-27 00:06:00 PDT,7719.629886,7719...
+			#       DEBUG: data_row  8 parsing csv line: -03-27 00:07:00 PDT,7619.629886,761...
+			#       DEBUG: data_row  9 parsing csv line: 0-03-27 00:08:00 PDT,7519.629886,75...
+			#       DEBUG: data_row 10 parsing csv line: 10-03-27 00:09:00 PDT,7319.629886,7...
+			#       DEBUG: data_row 11 parsing csv line: 010-03-27 00:10:00 PDT,7219.629886,...
+		end
+
+		# TODO: Calculate averages from totals
+		# TODO: Calculate percent of time spent above max or below min limits allowed
+		true
+	end
+
+	def process_timestamp(column_value)
+		@current_timestamp = DateTime.strptime(column_value, "%F %T %Z")
+		@first_timestamp    ||= @current_timestamp
+		@previous_timestamp ||= @current_timestamp
+		@elapsed_seconds = ((@current_timestamp - @previous_timestamp) * 24 * 60 * 60).to_i # DateTime diff is in days
+		@previous_timestamp = @current_timestamp
+		# TODO: Update a clock time element to show timestamp of heatmap data points
+	end
+
+	def process_data_point(column_value, index)
+		fraction_of_nominal = column_value.to_f / @nominal
+		track_fraction_totals_highs_lows_and_times(fraction_of_nominal, index)
+		determine_bin_for_fraction_and_record_if_changed(fraction_of_nominal, index)
+	end
+
+	# Track totals (for averages), highs, lows, times above/below limits
+	def track_fraction_totals_highs_lows_and_times(fraction_of_nominal, index)
+		@fraction_totals[index] ||= 0
+		@fraction_totals[index] += fraction_of_nominal
+		@times_below_min_allowed[index] ||= 0
+		@times_above_max_allowed[index] ||= 0
+		@times_below_min_allowed[index] += @elapsed_seconds if @timestamps_starts_below[index]
+		@times_above_max_allowed[index] += @elapsed_seconds if @timestamps_starts_above[index]
+
+		if fraction_of_nominal > @max_allowed_limit
+			@fraction_highs[index] ||= fraction_of_nominal
+			@fraction_highs[index]   = fraction_of_nominal if fraction_of_nominal > @fraction_highs[index]
+			@timestamps_starts_above[index] ||= @current_timestamp
+			@timestamps_starts_below[index] &&= nil
+		elsif fraction_of_nominal < @min_allowed_limit
+			@fraction_lows[index]  ||= fraction_of_nominal
+			@fraction_lows[index]    = fraction_of_nominal if fraction_of_nominal < @fraction_lows[index]
+			@timestamps_starts_above[index] &&= nil
+			@timestamps_starts_below[index] ||= @current_timestamp unless @timestamps_starts_below[index]
+		else
+			@timestamps_starts_below[index] &&= nil
+			@timestamps_starts_above[index] &&= nil
+		end
+	end
+
+	def determine_bin_for_fraction_and_record_if_changed(fraction_of_nominal, index)
+		bin = nil
+		@bin_thresholds.each_with_index do |threshold, bin_index|
+			if fraction_of_nominal <= threshold
+				bin = @bins[bin_index]
+				break
+			end
+		end
+		bin = @bins[-1] unless bin
+
+		if bin != @previous_bins[index]
+			@previous_bins[index] = bin
+			write_kml_change_entry(@csv_column_names[index], bin)
+			@animatedUpdate_is_open ||= true
+		end
 	end
 
 	def write_kml_open_tour_tags
@@ -229,7 +298,7 @@ class Csv2KmlTour
 
 	def write_kml_open_timestep_AnimatedUpdate_tags
 		@kml.puts("      <gx:AnimatedUpdate>")
-		@kml.puts("        <gx:delayedStart>#{@tour_current_time}</gx:delayedStart>") # unless (0 == @tour_current_time)
+		@kml.puts("        <gx:delayedStart>#{@tour_current_time}</gx:delayedStart>")
 		@kml.puts("        <gx:duration>#{@tour_step_duration}</gx:duration>")
 		@kml.puts("        <Update>")
 		@kml.puts("          <!-- timestamp: #{@current_timestamp.to_s} -->")
@@ -263,102 +332,4 @@ class Csv2KmlTour
 		@kml.puts("  </gx:Tour>")
 		true
 	end
-
-	TimestampIndex = 0
-	def parse_csv_data
-		is_first_data_row  = true
-		count_of_data_rows = 0
-		while (@csv.gets) do
-			count_of_data_rows += 1
-		       	csv_line = $_.strip
-			#puts("DEBUG: parsing csv_line #{csv_line}")
-			@animatedUpdate_is_open = false # gets set to true if any of this row's data points cause an update
-			csv_columns = csv_line.split(",")
-			csv_columns.each_with_index do |column_value, index|
-				#puts("DEBUG: parsing csv column #{@csv_column_names[index]}: #{column_value}")
-				if (TimestampIndex == index)
-					process_timestamp(column_value)
-				else
-					process_data_point(column_value, index)
-				end
-			end
-			write_kml_close_timestep_AnimatedUpdate_tags if @animatedUpdate_is_open
-			@tour_current_time += @tour_step_duration
-			check_on_progress
-		end
-
-		# TODO: Calculate averages from totals
-		# TODO: Calculate percent of time spent above max or below min limits allowed
-		true
-	end
-
-	def process_timestamp(column_value)
-		@current_timestamp = DateTime.new(column_value)
-		if is_first_data_row 
-			is_first_data_row = false
-			@first_timestamp    = @current_timestamp
-			@previous_timestamp = @current_timestamp
-			@elapsed_seconds = 0
-		else
-			@elapsed_seconds = ((@current_timestamp - @previous_timestamp) * 24 * 60 * 60).to_i # DateTime diff is in days
-			@previous_timestamp = @current_timestamp
-		end
-
-		# TODO: Update a clock time element to show timestamp of heatmap data points
-	end
-
-	def process_data_point(column_value, index)
-		fraction_of_nominal = column_value.to_f / @nominal
-		track_fraction_totals_highs_lows_and_times(fraction_of_nominal, index)
-		determine_bin_for_fraction_and_record_if_changed(fraction_of_nominal, index)
-	end
-
-	# Track totals (for averages), highs, lows, times above/below limits
-	def track_fraction_totals_highs_lows_and_times(fraction_of_nominal, index)
-		@fraction_totals[index] += fraction_of_nominal
-		@times_below_min_allowed[index] += @elapsed_seconds if @timestamps_starts_below[index]
-		@times_above_max_allowed[index] += @elapsed_seconds if @timestamps_starts_above[index]
-
-		if(fraction_of_nominal > @max_allowed_limit)
-			@fraction_highs[index] = fraction_of_nominal unless (@fraction_highs[index] && @fraction_highs[index] > fraction_of_nominal)
-			@timestamps_starts_above[index] = @current_timestamp unless @timestamps_starts_above[index]
-			@timestamps_starts_below[index] = nil                if     @timestamps_starts_below[index]
-		elsif(fraction_of_nominal < @min_allowed_limit)
-			@fraction_lows[index]  = fraction_of_nominal unless (@fraction_lows[index]  && @fraction_lows[index] < fraction_of_nominal)
-			@timestamps_starts_above[index] = nil                if     @timestamps_starts_above[index]
-			@timestamps_starts_below[index] = @current_timestamp unless @timestamps_starts_below[index]
-		else
-			@timestamps_starts_below[index] = nil                if     @timestamps_starts_below[index]
-			@timestamps_starts_above[index] = nil                if     @timestamps_starts_above[index]
-		end
-	end
-
-	def determine_bin_for_fraction_and_record_if_changed(fraction_of_nominal, index)
-		bin = nil
-		@bin_thresholds.each_with_index do |threshold, bin_index|
-			if (fraction_of_nominal <= threshold)
-				bin = @bins[bin_index]
-				break
-			end
-		end
-		bin = @bins[-1] unless bin
-
-		if (bin != @previous_bins[index])
-			@previous_bins[index] = bin
-			write_kml_change_entry(@csv_column_names[index], bin)
-			@animatedUpdate_is_open = true unless @animatedUpdate_is_open 
-		end
-	end
-
-	def check_on_progress
-		@csv_file_pos = @csv.pos
-		@progress_percent = @csv_file_pos / @csv_file_size 
-		if (@progress_percent >= @report_progress_at)
-			@report_progress_at += @reporting_increments
-			puts sprintf("%3d%% of csv file processed", @progress_percent*100)
-		end
-	end
-
-
-
 end
