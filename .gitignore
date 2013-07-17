@@ -13,3 +13,10 @@
 # Ignore all logfiles and tempfiles.
 /log/*.log
 /tmp
+
+# Ignore temp and swap vim viles
+*.sw[a-z]
+*~
+
+# Ignore my directory of code test files:
+/files_for_test_runs
